@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use anyhow::Ok;
 use axum::{extract::Multipart, response::Html, routing::{get, post}, Extension, Router};
-// use sqlx::Row;
+use sqlx::Row;
 
 #[tokio::main]
 async fn main()-> anyhow::Result<()> {
@@ -40,8 +40,32 @@ async fn index_page() -> Html<String> {
     let content = tokio::fs::read_to_string(path).await.unwrap();
     Html(content)
 }
+async fn insert_image_into_database(pool: &sqlx::SqlitePool, tags:&str)-> anyhow::Result<i64>{
+    let row = 
+    sqlx::query("ÏNSERT INTO images (tags) VALUES (?) RETURNING id")
+    .bind(tags)
+    .fetch_one(pool)
+    .await?;
+    Ok(row.get(0))
+}
 
-async fn uploader(mut multipart: Multipart) -> String {
+async fn save_image(id: i64, bytes: &[u8]) -> anyhow::Result<()> {
+    let base_path = std::path::Path::new("images");
+    if !base_path.exists() || !base_path.is_dir() {
+        tokio::fs::create_dir_all(base_path).await?;
+    }
+    let image_path = base_path.join(format!("{id}.jpg"));
+    if image_path.exists() {
+        anyhow::bail!("File already exists");
+    }
+    tokio::fs::write(image_path, bytes).await?;
+    Ok(())
+}
+
+async fn uploader(
+    Extension(pool): Extension<sqlx::SqlitePool>,
+    mut multipart: Multipart
+) -> String {
     let mut tags = None; 
     let mut image = None;
     while let Some(field) = multipart.next_field().await.unwrap() {
@@ -56,7 +80,7 @@ async fn uploader(mut multipart: Multipart) -> String {
     }
 
     if let (Some(tags), Some(image)) = (tags, image) { 
-
+        let new_image_id = insert_image_into_database(&pool, &tags).await.unwrap();
     } else {
         panic!("Missing field");
     }
