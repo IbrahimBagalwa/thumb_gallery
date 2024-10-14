@@ -111,6 +111,11 @@
 
     <div id="thumbnails"></div>
     <hr />
+    <form method="post" action="/search">
+      <input type="text" name="tags" value="" placeholder="Tags" /> <br />
+      <input type="submit" value="Search" />
+    </form>
+    <hr />
     <h2>Add an Image</h2>
 
     <form method="post" action="/upload" enctype="multipart/form-data">
@@ -123,4 +128,21 @@
       Rust-like Aesthetic Thumbnail Server | Developed by IbrahimBagalwa
     </footer>
   </body>
+  <script>
+    async function getImages() {
+      const response = await fetch('/images')
+      const images = await response.json()
+
+      let html = ''
+      for (let i = 0; i < images.length; i++) {
+        html += '<div>' + images[i].tags + '<br />'
+        html += "<a href='/image/" + images[i].id + "'>"
+        html += "<img src='/thumb/" + images[i].id + "' />"
+        html += '</a></div>'
+      }
+      document.getElementById('thumbnails').innerHTML = html
+    }
+
+    getImages()
+  </script>
 </html>

@@ -27,6 +27,9 @@ async fn main()-> anyhow::Result<()> {
         .route("/", get(index_page))
         .route("/upload", post(uploader))
         .route("/image/:id", get(get_image))
+        .route("/thumb/:id", get(get_thumbnail))
+        .route("/images", get(list_images))
+         .route("/search", post(search_images))
         .layer(Extension(connection_pool));
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     axum::Server::bind(&addr)
@@ -67,7 +70,7 @@ async fn save_image(id: i64, bytes: &[u8]) -> anyhow::Result<()> {
 async fn uploader(
     Extension(pool): Extension<sqlx::SqlitePool>,
     mut multipart: Multipart
-) -> String {
+) -> Html<String> {
     let mut tags = None; 
     let mut image = None;
     while let Some(field) = multipart.next_field().await.unwrap() {
@@ -90,8 +93,9 @@ async fn uploader(
     } else {
         panic!("Missing field");
     }
-
-    "Ok".to_string()
+    let path = std::path::Path::new("src/redirect.html");
+    let content = tokio::fs::read_to_string(path).await.unwrap();
+    Html(content)
 }
 async fn get_image(Path(id): Path<i64>) -> impl IntoResponse {
     let filename = format!("images/{id}.jpg");
@@ -142,4 +146,64 @@ async fn fill_missing_thumbnails(pool: &Pool<Sqlite>) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+async fn get_thumbnail(Path(id): Path<i64>) -> impl IntoResponse {
+    let filename = format!("images/{id}_thumb.jpg");
+    let attachment = format!("filename={filename}");
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_static("image/jpeg"),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        header::HeaderValue::from_str(&attachment).unwrap()
+    );
+    let file = tokio::fs::File::open(&filename).await.unwrap();
+    axum::response::Response::builder()
+        .header(header::CONTENT_TYPE, header::HeaderValue::from_static("image/jpeg"))
+        .header(header::CONTENT_DISPOSITION, header::HeaderValue::from_str(&attachment).unwrap())
+        .body(StreamBody::new(ReaderStream::new(file)))
+        .unwrap()
+}
+
+#[derive(Deserialize, Serialize, FromRow, Debug)]
+struct ImageRecord {
+    id: i64,
+    tags: String,
+}
+
+async fn list_images(Extension(pool): Extension<sqlx::SqlitePool>) -> Json<Vec<ImageRecord>> {
+    sqlx::query_as::<_, ImageRecord>("SELECT id, tags FROM images ORDER BY id")
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .into()
+}
+
+
+#[derive(Deserialize)]
+struct Search {
+    tags: String
+}
+
+async fn search_images(Extension(pool): Extension<sqlx::SqlitePool>, Form(form): Form<Search>) -> Html<String> {
+    let tag = format!("%{}%", form.tags);
+
+    let rows = sqlx::query_as::<_, ImageRecord>("SELECT id, tags FROM images WHERE tags LIKE ? ORDER BY id")
+        .bind(tag)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+    let mut results = String::new();
+    for row in rows {
+        results.push_str(&format!("<a href=\"/image/{}\"><img src='/thumb/{}' /></a><br />", row.id, row.id));
+    }
+
+    let path = std::path::Path::new("src/search.html");
+    let mut content = tokio::fs::read_to_string(path).await.unwrap();
+    content = content.replace("{results}", &results);
+
+    Html(content)
 }
